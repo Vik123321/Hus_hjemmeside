@@ -33,62 +33,38 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser (DK1)")
     try:
-        # Vi henter flere data (200 rækker) for at være helt sikre på at dække tidszoner
-        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=200&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
+        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
         
-        # FIX: Brug den rigtige danske time, uanset hvor serveren står
-        # Vi tager fat i 'nu' og runder ned til nærmeste time
+        # Vi finder nuværende time i dansk tid (UTC+2)
         nu_dk = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)
-        nu_dk = nu_dk.replace(minute=0, second=0, microsecond=0).replace(tzinfo=None)
-        
-        start_vindue = nu_dk - datetime.timedelta(hours=12)
-        slut_vindue = nu_dk + datetime.timedelta(hours=24)
-        
+        nu_time = nu_dk.hour
+        nu_dag = nu_dk.day
+
         data_liste = []
         for r in records:
-            # Vi konverterer API-tiden (HourDK) til et rent datetime objekt
             t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '').split('+')[0])
             
-            if start_vindue <= t_obj <= slut_vindue:
+            # Vi tager data fra 12 timer før til 24 timer frem
+            if (nu_dk - datetime.timedelta(hours=12)) <= t_obj <= (nu_dk + datetime.timedelta(hours=24)):
                 pris = (r['SpotPriceDKK'] / 1000) * 1.25
-                
-                # Lav label: Hvis det er midnat, vis dato. Ellers bare klokkeslæt.
                 label = t_obj.strftime("%H:00")
-                if t_obj.hour == 0:
-                    label = t_obj.strftime("%d/%m")
                 
-                # VIGTIGT: Sammenlign tiderne direkte for at finde den grå søjle
-                type_label = "Nuværende" if t_obj == nu_dk else "Normal"
+                # Matcher vi nuværende time og dag?
+                is_now = (t_obj.hour == nu_time and t_obj.day == nu_dag)
+                type_label = "Lige nu" if is_now else "Normal"
                 
-                data_liste.append({
-                    "Tid": label,
-                    "Pris": pris,
-                    "Type": type_label,
-                    "raw_time": t_obj
-                })
-        
+                data_liste.append({"Tid": label, "Pris": pris, "Type": type_label, "raw": t_obj})
+
         if data_liste:
-            df_el = pd.DataFrame(data_liste).sort_values("raw_time")
-            
-            # Tegn grafen
-            st.bar_chart(
-                df_el, 
-                x="Tid", 
-                y="Pris", 
-                color="Type",
-                color_config={
-                    "Nuværende": "#808080", # Grå
-                    "Normal": "#f5c211"    # Gul
-                }
-            )
-            st.caption(f"Priser i DKK/kWh inkl. moms. Grå søjle = nu ({nu_dk.strftime('%H:00')})")
+            df_el = pd.DataFrame(data_liste).sort_values("raw")
+            st.bar_chart(df_el, x="Tid", y="Pris", color="Type", 
+                         color_config={"Lige nu": "#808080", "Normal": "#f5c211"})
         else:
-            st.warning(f"Kunne ikke matche data. Nu (DK): {nu_dk.strftime('%H:00')}")
-            
+            st.warning("Henter data... Prøv at opdatere om 10 sekunder.")
     except Exception as e:
-        st.error(f"Der skete en fejl: {e}")
+        st.error(f"Fejl: {e}")
         
 with col_skrald:
     st.header("🗑️ Skrald")
