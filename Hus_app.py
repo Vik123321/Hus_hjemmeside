@@ -2,58 +2,90 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
+import requests 
 
 # Konfiguration
 st.set_page_config(page_title="Voldgade 19", page_icon="🏡", layout="wide")
 
 # Overskrift
-st.title("🏡 Voldgade 19")
-st.markdown("Husets digitale kontrolpanel")
+st.title("🏡 Voldgade 19, Skjern")
+st.markdown("Husets digitale kontrolpanel med live-data!")
 st.divider()
 
-# Layout med tre kolonner til toppen
+# Layout med tre kolonner
 col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 
 with col_strøm:
-    st.header("⚡ Strømpriser (Næste 36 timer)")
+    st.header("⚡ Strømpriser (DK1 - Jylland)")
     
-    # Henter den nuværende time (f.eks. kl. 14 bliver til "I dag 14:00")
-    nu = datetime.datetime.now()
-    nu_time_streng = f"I dag {nu.hour:02d}:00"
-    
-    timer_idag = [f"I dag {i:02d}:00" for i in range(24)]
-    timer_imorgen = [f"I morgen {i:02d}:00" for i in range(12)]
-    alle_timer = timer_idag + timer_imorgen
-    
-    priser = np.random.uniform(0.5, 3.5, 36) # Fiktive priser
-    
-    # NYT: Vi laver en liste med farver. Hvis timen er lig med nu_time_streng, bliver den grå (#808080), ellers gul (#f5c211)
-    farver = ["#808080" if tid == nu_time_streng else "#f5c211" for tid in alle_timer]
-    
-    df_power = pd.DataFrame({
-        "Tid": alle_timer, 
-        "Pris (DKK/kWh)": priser,
-        "Farve": farver # Tilføjer farven til dataen
-    })
-    
-    # Bruger farve-kolonnen i diagrammet
-    st.bar_chart(df_power, x="Tid", y="Pris (DKK/kWh)", color="Farve")
+    try:
+        # Henter de nyeste 48 timers priser fra Energi Data Service
+        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=48&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
+        response = requests.get(url)
+        data = response.json()
+        
+        # Udtrækker tider og priser
+        records = data.get('records', [])
+        
+        # Vi vender listen om, så den ældste er først (kronologisk rækkefølge)
+        records.reverse()
+        
+        tider = []
+        priser = []
+        nu = datetime.datetime.now()
+        nu_time_streng = nu.strftime("%Y-%m-%dT%H:00:00") # Format der matcher API'et
+        
+        for record in records:
+            # Omregner fra MWh til kWh og lægger 25% moms på
+            pris_kwh = (record['SpotPriceDKK'] / 1000) * 1.25
+            priser.append(pris_kwh)
+            
+            # Formatér tiden pænere til grafen
+            tid_obj = datetime.datetime.fromisoformat(record['HourDK'])
+            tider.append(f"{tid_obj.day}/{tid_obj.month} kl. {tid_obj.hour:02d}")
+        
+        # Farver den nuværende time grå, resten gul
+        nu_formateret = f"{nu.day}/{nu.month} kl. {nu.hour:02d}"
+        farver = ["#808080" if tid == nu_formateret else "#f5c211" for tid in tider]
+        
+        df_power = pd.DataFrame({
+            "Tid": tider, 
+            "Pris (DKK/kWh inkl. moms)": priser,
+            "Farve": farver
+        })
+        
+        st.bar_chart(df_power, x="Tid", y="Pris (DKK/kWh inkl. moms)", color="Farve")
+        
+    except Exception as e:
+        st.error("Kunne ikke hente live-strømpriser lige nu.")
 
 with col_skrald:
     st.header("🗑️ Skrald")
     st.info("**Rest/Mad:**\nTorsdag d. 14/5")
     st.success("**Genbrug:**\nTirsdag d. 19/5")
+    st.caption("Tip: Tjek Ringkøbing-Skjern Kommunes hjemmeside for at tilmelde SMS-service.")
 
 with col_vejr:
-    st.header("🌦️ Vejr i Skjern")
-    st.write("📅 **Ugeoversigt:**")
-    st.write("☀️ **Ons:** 14°C")
-    st.write("🌦️ **Tor:** 12°C")
-    st.write("☁️ **Fre:** 11°C")
-    st.write("🌧️ **Lør:** 9°C")
-    st.write("🌤️ **Søn:** 13°C")
-
-st.divider()
+    st.header("🌦️ Vejret i Skjern")
+    try:
+        # Koordinater for Skjern: Latitude 55.948, Longitude 8.496
+        vejr_url = "https://api.open-meteo.com/v1/forecast?latitude=55.948&longitude=8.496&daily=temperature_2m_max,temperature_2m_min&timezone=Europe%2FBerlin"
+        vejr_response = requests.get(vejr_url)
+        vejr_data = vejr_response.json()
+        
+        dage = vejr_data['daily']['time']
+        max_temp = vejr_data['daily']['temperature_2m_max']
+        min_temp = vejr_data['daily']['temperature_2m_min']
+        
+        # Viser de næste 5 dage
+        ugedage_navne = ["Man", "Tir", "Ons", "Tor", "Fre", "Lør", "Søn"]
+        for i in range(5):
+            dato_obj = datetime.datetime.fromisoformat(dage[i])
+            ugedag = ugedage_navne[dato_obj.weekday()]
+            st.write(f"**{ugedag}:** {min_temp[i]}°C til {max_temp[i]}°C")
+            
+    except Exception:
+        st.error("Kunne ikke hente vejrudsigten.")
 
 # ÅRSHJUL MED TJEKLISTE
 st.header("🗓️ Husets Årshjul")
