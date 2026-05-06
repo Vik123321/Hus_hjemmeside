@@ -33,32 +33,57 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser")
     try:
-        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=48&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
+        # Vi henter lidt ekstra data for at være sikre på at have nok til 12 timer bagud
+        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
         records.reverse()
         
+        # Find nuværende tidspunkt (afrundet til hel time)
+        nu = datetime.datetime.now().replace(minute=0, second=0, microsecond=0)
+        
+        # Definition af tidsvindue: 12 timer bagud og 24 timer frem (i alt 37 søjler inkl. 'nu')
+        start_vindue = nu - datetime.timedelta(hours=12)
+        slut_vindue = nu + datetime.timedelta(hours=24)
+        
         tider, priser, farver = [], [], []
-        nu = datetime.datetime.now()
         
         for r in records:
-            p = (r['SpotPriceDKK'] / 1000) * 1.25
-            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', ''))
-            t_str = t_obj.strftime("%d/%m %H:00")
+            # Fjern 'Z' eller andre tidszone-indikatorer for ren sammenligning
+            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '').split('+')[0])
             
-            tider.append(t_str)
-            priser.append(p)
-            # Tjekker om timen matcher nuværende time
-            if t_obj.date() == nu.date() and t_obj.hour == nu.hour:
-                farver.append("#808080") # Grå for NU
-            else:
-                farver.append("#f5c211") # Gul for resten
+            # Vi tager kun de data, der ligger inden for vores 36-timers vindue
+            if start_vindue <= t_obj <= slut_vindue:
+                p = (r['SpotPriceDKK'] / 1000) * 1.25 # Pris pr. kWh inkl. moms
+                
+                # Formatér teksten på søjlen (f.eks. "14:00")
+                t_str = t_obj.strftime("%H:%00")
+                if t_obj.date() != nu.date():
+                    t_str = t_obj.strftime("%d/%m %H:00") # Tilføj dato hvis det er en anden dag
+                
+                tider.append(t_str)
+                priser.append(p)
+                
+                # Sæt farve: Grå hvis det er den aktuelle time, ellers gul
+                if t_obj == nu:
+                    farver.append("#808080") # GRÅ for nuværende time
+                else:
+                    farver.append("#f5c211") # GUL for resten
         
-        df_el = pd.DataFrame({"Tid": tider, "Pris": priser, "Farve": farver})
-        st.bar_chart(df_el, x="Tid", y="Pris", color="Farve")
-    except:
-        st.error("Kunne ikke hente elpriser.")
-
+        # Lav DataFrame og vis grafen
+        df_el = pd.DataFrame({
+            "Tid": tider, 
+            "Pris (DKK/kWh)": priser, 
+            "Farve": farver
+        })
+        
+        # Vi bruger st.bar_chart og fortæller den, at den skal bruge 'Farve' kolonnen til farverne
+        st.bar_chart(df_el, x="Tid", y="Pris (DKK/kWh)", color="Farve")
+        
+        st.caption("Grafen viser 12 timer tilbage og 24 timer frem. Den grå søjle er prisen lige nu.")
+        
+    except Exception as e:
+        st.error(f"Kunne ikke hente elpriser: {e}")
 with col_skrald:
     st.header("🗑️ Skrald")
     # Vi bruger de datoer du sendte i billederne
