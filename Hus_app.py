@@ -33,59 +33,59 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser (DK1)")
     try:
-        # Henter data (vi henter 100 rækker for at have nok til bagud-tjek)
+        # Hent data
         url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
-        records.reverse()
         
-        # Find nuværende time (f.eks. 21:00:00)
+        # Find nuværende time (f.eks. 21:00)
         nu = datetime.datetime.now().replace(minute=0, second=0, microsecond=0)
         
-        # Definer vinduet: 12 timer tilbage, 24 timer frem
+        # Definer vindue: 12 timer tilbage, 24 timer frem
         start_vindue = nu - datetime.timedelta(hours=12)
         slut_vindue = nu + datetime.timedelta(hours=24)
         
-        plot_data = []
-        
+        # Filtrér og formatér data
+        data_liste = []
         for r in records:
-            # Rens tidsformatet fra API'et
-            t_str_raw = r['HourDK'].replace('Z', '').split('+')[0]
-            t_obj = datetime.datetime.fromisoformat(t_str_raw)
+            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '').split('+')[0])
             
             if start_vindue <= t_obj <= slut_vindue:
                 pris = (r['SpotPriceDKK'] / 1000) * 1.25
-                
-                # Lav en pæn label til x-aksen
                 label = t_obj.strftime("%H:00")
-                if t_obj.hour == 0: # Vis dato ved midnat for overblik
-                    label = t_obj.strftime("%d/%m")
+                if t_obj.hour == 0: label = t_obj.strftime("%d/%m")
                 
-                # Find farven: Grå hvis det er NU, ellers gul
-                farve = "#808080" if t_obj == nu else "#f5c211"
+                # Farve-logik
+                farve = "Nuværende" if t_obj == nu else "Normal"
                 
-                plot_data.append({
+                data_liste.append({
                     "Tid": label,
                     "Pris": pris,
-                    "Farve": farve,
-                    "sort_key": t_obj # Bruges til at sikre rækkefølgen
+                    "Type": farve,
+                    "raw_time": t_obj
                 })
         
-        # Lav DataFrame
-        df_el = pd.DataFrame(plot_data).sort_values("sort_key")
-        
-        # Vi bruger st.bar_chart med en specifik farve-mapping
-        st.bar_chart(
-            df_el, 
-            x="Tid", 
-            y="Pris", 
-            color="Farve", # Her fortæller vi den, hvilken kolonne der styrer farven
-        )
-        
-        st.caption(f"Lige nu: {nu.strftime('%H:00')} (Grå søjle)")
-        
+        if data_liste:
+            # Sortér efter den rå tid og lav DataFrame
+            df_el = pd.DataFrame(data_liste).sort_values("raw_time")
+            
+            # Tegn grafen med faste farver
+            st.bar_chart(
+                df_el, 
+                x="Tid", 
+                y="Pris", 
+                color="Type",
+                color_config={
+                    "Nuværende": "#808080", # Grå
+                    "Normal": "#f5c211"    # Gul
+                }
+            )
+            st.caption(f"Grå søjle viser prisen kl. {nu.strftime('%H:00')}")
+        else:
+            st.warning("Ingen prisdata fundet for det valgte tidsrum.")
+            
     except Exception as e:
-        st.error(f"Fejl i data: {e}")
+        st.error(f"Fejl i visning af elpriser. Prøv at opdatere siden.")
         
 with col_skrald:
     st.header("🗑️ Skrald")
