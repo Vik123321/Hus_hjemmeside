@@ -31,59 +31,62 @@ def get_weather_icon(code):
 col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 
 with col_strøm:
-    st.header("⚡ Strømpriser")
+    st.header("⚡ Strømpriser (DK1)")
     try:
-        # Vi henter lidt ekstra data for at være sikre på at have nok til 12 timer bagud
+        # Henter data (vi henter 100 rækker for at have nok til bagud-tjek)
         url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
         records.reverse()
         
-        # Find nuværende tidspunkt (afrundet til hel time)
+        # Find nuværende time (f.eks. 21:00:00)
         nu = datetime.datetime.now().replace(minute=0, second=0, microsecond=0)
         
-        # Definition af tidsvindue: 12 timer bagud og 24 timer frem (i alt 37 søjler inkl. 'nu')
+        # Definer vinduet: 12 timer tilbage, 24 timer frem
         start_vindue = nu - datetime.timedelta(hours=12)
         slut_vindue = nu + datetime.timedelta(hours=24)
         
-        tider, priser, farver = [], [], []
+        plot_data = []
         
         for r in records:
-            # Fjern 'Z' eller andre tidszone-indikatorer for ren sammenligning
-            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '').split('+')[0])
+            # Rens tidsformatet fra API'et
+            t_str_raw = r['HourDK'].replace('Z', '').split('+')[0]
+            t_obj = datetime.datetime.fromisoformat(t_str_raw)
             
-            # Vi tager kun de data, der ligger inden for vores 36-timers vindue
             if start_vindue <= t_obj <= slut_vindue:
-                p = (r['SpotPriceDKK'] / 1000) * 1.25 # Pris pr. kWh inkl. moms
+                pris = (r['SpotPriceDKK'] / 1000) * 1.25
                 
-                # Formatér teksten på søjlen (f.eks. "14:00")
-                t_str = t_obj.strftime("%H:%00")
-                if t_obj.date() != nu.date():
-                    t_str = t_obj.strftime("%d/%m %H:00") # Tilføj dato hvis det er en anden dag
+                # Lav en pæn label til x-aksen
+                label = t_obj.strftime("%H:00")
+                if t_obj.hour == 0: # Vis dato ved midnat for overblik
+                    label = t_obj.strftime("%d/%m")
                 
-                tider.append(t_str)
-                priser.append(p)
+                # Find farven: Grå hvis det er NU, ellers gul
+                farve = "#808080" if t_obj == nu else "#f5c211"
                 
-                # Sæt farve: Grå hvis det er den aktuelle time, ellers gul
-                if t_obj == nu:
-                    farver.append("#808080") # GRÅ for nuværende time
-                else:
-                    farver.append("#f5c211") # GUL for resten
+                plot_data.append({
+                    "Tid": label,
+                    "Pris": pris,
+                    "Farve": farve,
+                    "sort_key": t_obj # Bruges til at sikre rækkefølgen
+                })
         
-        # Lav DataFrame og vis grafen
-        df_el = pd.DataFrame({
-            "Tid": tider, 
-            "Pris (DKK/kWh)": priser, 
-            "Farve": farver
-        })
+        # Lav DataFrame
+        df_el = pd.DataFrame(plot_data).sort_values("sort_key")
         
-        # Vi bruger st.bar_chart og fortæller den, at den skal bruge 'Farve' kolonnen til farverne
-        st.bar_chart(df_el, x="Tid", y="Pris (DKK/kWh)", color="Farve")
+        # Vi bruger st.bar_chart med en specifik farve-mapping
+        st.bar_chart(
+            df_el, 
+            x="Tid", 
+            y="Pris", 
+            color="Farve", # Her fortæller vi den, hvilken kolonne der styrer farven
+        )
         
-        st.caption("Grafen viser 12 timer tilbage og 24 timer frem. Den grå søjle er prisen lige nu.")
+        st.caption(f"Lige nu: {nu.strftime('%H:00')} (Grå søjle)")
         
     except Exception as e:
-        st.error(f"Kunne ikke hente elpriser: {e}")
+        st.error(f"Fejl i data: {e}")
+        
 with col_skrald:
     st.header("🗑️ Skrald")
     # Vi bruger de datoer du sendte i billederne
