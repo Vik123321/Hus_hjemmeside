@@ -31,7 +31,7 @@ def get_weather_icon(code):
 col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 
 with col_strøm:
-    st.header("⚡ Strømpriser (DK1)")
+    st.header("⚡ Strømpriser")
     try:
         url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=48&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
