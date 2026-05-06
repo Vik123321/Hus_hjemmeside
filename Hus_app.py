@@ -33,39 +33,32 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser (DK1)")
     try:
-        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
+        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=48&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
+        records.reverse()
         
-        # Vi finder nuværende time i dansk tid (UTC+2)
-        nu_dk = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)
-        nu_time = nu_dk.hour
-        nu_dag = nu_dk.day
-
-        data_liste = []
+        tider, priser, farver = [], [], []
+        nu = datetime.datetime.now()
+        
         for r in records:
-            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '').split('+')[0])
+            p = (r['SpotPriceDKK'] / 1000) * 1.25
+            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', ''))
+            t_str = t_obj.strftime("%d/%m %H:00")
             
-            # Vi tager data fra 12 timer før til 24 timer frem
-            if (nu_dk - datetime.timedelta(hours=12)) <= t_obj <= (nu_dk + datetime.timedelta(hours=24)):
-                pris = (r['SpotPriceDKK'] / 1000) * 1.25
-                label = t_obj.strftime("%H:00")
-                
-                # Matcher vi nuværende time og dag?
-                is_now = (t_obj.hour == nu_time and t_obj.day == nu_dag)
-                type_label = "Lige nu" if is_now else "Normal"
-                
-                data_liste.append({"Tid": label, "Pris": pris, "Type": type_label, "raw": t_obj})
-
-        if data_liste:
-            df_el = pd.DataFrame(data_liste).sort_values("raw")
-            st.bar_chart(df_el, x="Tid", y="Pris", color="Type", 
-                         color_config={"Lige nu": "#808080", "Normal": "#f5c211"})
-        else:
-            st.warning("Henter data... Prøv at opdatere om 10 sekunder.")
-    except Exception as e:
-        st.error(f"Fejl: {e}")
+            tider.append(t_str)
+            priser.append(p)
+            # Tjekker om timen matcher nuværende time
+            if t_obj.date() == nu.date() and t_obj.hour == nu.hour:
+                farver.append("#808080") # Grå for NU
+            else:
+                farver.append("#f5c211") # Gul for resten
         
+        df_el = pd.DataFrame({"Tid": tider, "Pris": priser, "Farve": farver})
+        st.bar_chart(df_el, x="Tid", y="Pris", color="Farve")
+    except:
+        st.error("Kunne ikke hente elpriser.")
+
 with col_skrald:
     st.header("🗑️ Skrald")
     # Vi bruger de datoer du sendte i billederne
