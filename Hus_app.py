@@ -34,58 +34,60 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser (DK1)")
     try:
-        # Vi henter data for de sidste par dage for at have nok historik
+        # 1. Hent data
         url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
+        records.reverse() # Gå fra fortid til fremtid
         
-        # Sorter data så tiderne går fra fortid til fremtid
-        records.reverse()
-        
-        # Brug fast tidszone (Dansk tid)
-        import datetime
+        # 2. Tidsstyring (Dansk tid)
         from zoneinfo import ZoneInfo
+        import altair as alt
         tz_dk = ZoneInfo("Europe/Copenhagen")
         nu = datetime.datetime.now(tz_dk).replace(minute=0, second=0, microsecond=0)
         
         data_list = []
         
+        # 3. Find de relevante timer
         for r in records:
-            # Konverter tidspunkt fra API (UTC/Dansk blanding) til ren dansk tid
+            # Vi fjerner 'Z' og tvinger tidszonen til dansk tid
             t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '')).replace(tzinfo=tz_dk)
             
-            # Beregn tidsforskel i timer
+            # Beregn forskel i timer fra 'nu'
             diff = int((t_obj - nu).total_seconds() / 3600)
             
-            # Vi tager kun de timer vi skal bruge: -6 til +12
+            # Filtrer: 6 bagud, 1 nu, 12 frem
             if -6 <= diff <= 12:
-                pris = (r['SpotPriceDKK'] / 1000) * 1.25 # Pris i kr inkl. moms
+                pris = (r['SpotPriceDKK'] / 1000) * 1.25
                 tid_label = t_obj.strftime("%H:00")
                 
-                # Sæt farven: Grå hvis det er nu (diff 0), ellers gul
-                farve_kode = "#808080" if diff == 0 else "#f5c211"
+                # Farve-logik: Grå for nu (diff 0), ellers gul
+                farve = "#808080" if diff == 0 else "#f5c211"
                 
-                data_list.append({
-                    "Tid": tid_label, 
-                    "Pris": pris, 
-                    "Farve": farve_kode
-                })
-        
-        # Lav DataFrame
+                data_list.append({"Tid": tid_label, "Pris": pris, "Farve": farve, "Sortering": diff})
+
+        # 4. Lav DataFrame og tjek om den er tom
         df_el = pd.DataFrame(data_list)
-        
-        # Vis bar chart
-        # Vi bruger 'Farve' kolonnen direkte til at styre farven på søjlerne
-        st.bar_chart(
-            df_el, 
-            x="Tid", 
-            y="Pris", 
-            color="Farve", 
-            use_container_width=True
-        )
-        
+
+        if not df_el.empty:
+            # Vi bruger Altair for at få 100% kontrol over farverne
+            chart = alt.Chart(df_el).mark_bar().encode(
+                x=alt.X('Tid:N', sort=alt.SortField('Sortering'), title='Klokkeslæt'),
+                y=alt.Y('Pris:Q', title='Pris (kr/kWh)'),
+                color=alt.Color('Farve:N', scale=None) # scale=None gør at den bruger hex-koderne direkte
+            ).properties(height=300)
+            
+            st.altair_chart(chart, use_container_width=True)
+            
+            # Lille hjælpetekst til dig selv under udvikling
+            if 0 not in df_el['Sortering'].values:
+                st.warning("⚠️ Prisen for 'NU' mangler (tjek om din dato i 2026 matcher API-data fra 2024).")
+        else:
+            st.info("Ingen elpriser fundet for det valgte tidsrum (6 timer bagud/12 frem).")
+            st.caption(f"Appens 'nu' er: {nu.strftime('%d/%m-%Y %H:%M')}. API'et har kun data for nutiden.")
+
     except Exception as e:
-        st.error(f"Kunne ikke hente elpriser: {e}")
+        st.error(f"Fejl ved hentning: {e}")
 
 with col_skrald:
     st.header("🗑️ Skrald")
