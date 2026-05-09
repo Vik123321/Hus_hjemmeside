@@ -34,13 +34,12 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser (DK1)")
     try:
-        # 1. Hent data
+        # 1. Hent nyeste data fra Energi Data Service
         url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
-        records.reverse() # Gå fra fortid til fremtid
+        records.reverse()
         
-        # 2. Tidsstyring (Dansk tid)
         from zoneinfo import ZoneInfo
         import altair as alt
         tz_dk = ZoneInfo("Europe/Copenhagen")
@@ -48,47 +47,44 @@ with col_strøm:
         
         data_list = []
         
-        # 3. Find de relevante timer
-        for r in records:
-            # Vi fjerner 'Z' og tvinger tidszonen til dansk tid
-            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '')).replace(tzinfo=tz_dk)
-            
-            # Beregn forskel i timer fra 'nu'
-            diff = int((t_obj - nu).total_seconds() / 3600)
-            
-            # Filtrer: 6 bagud, 1 nu, 12 frem
-            if -6 <= diff <= 12:
-                pris = (r['SpotPriceDKK'] / 1000) * 1.25
-                tid_label = t_obj.strftime("%H:00")
-                
-                # Farve-logik: Grå for nu (diff 0), ellers gul
-                farve = "#808080" if diff == 0 else "#f5c211"
-                
-                data_list.append({"Tid": tid_label, "Pris": pris, "Farve": farve, "Sortering": diff})
+        # Tjek om vi overhovedet har data der matcher 2026
+        has_current_data = any(nu.year == int(r['HourDK'][:4]) for r in records)
 
-        # 4. Lav DataFrame og tjek om den er tom
+        if not has_current_data:
+            st.caption("🧪 Simulation: Viser nyeste tilgængelige priser tilpasset 2026.")
+            # Tag de sidste 19 timer fra API'et og 'fake' deres tidspunkter
+            latest_19 = records[-19:]
+            for i, r in enumerate(latest_19):
+                diff = i - 6 # Gør så den 7. søjle (index 6) altid er 'NU' (diff=0)
+                fiktiv_tid = nu + datetime.timedelta(hours=diff)
+                
+                pris = (r['SpotPriceDKK'] / 1000) * 1.25
+                farve = "#808080" if diff == 0 else "#f5c211"
+                data_list.append({"Tid": fiktiv_tid.strftime("%H:00"), "Pris": pris, "Farve": farve, "Sortering": diff})
+        else:
+            # Normal drift hvis API'et har 2026 data
+            for r in records:
+                t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '')).replace(tzinfo=tz_dk)
+                diff = int((t_obj - nu).total_seconds() / 3600)
+                if -6 <= diff <= 12:
+                    pris = (r['SpotPriceDKK'] / 1000) * 1.25
+                    farve = "#808080" if diff == 0 else "#f5c211"
+                    data_list.append({"Tid": t_obj.strftime("%H:00"), "Pris": pris, "Farve": farve, "Sortering": diff})
+
         df_el = pd.DataFrame(data_list)
 
         if not df_el.empty:
-            # Vi bruger Altair for at få 100% kontrol over farverne
             chart = alt.Chart(df_el).mark_bar().encode(
                 x=alt.X('Tid:N', sort=alt.SortField('Sortering'), title='Klokkeslæt'),
                 y=alt.Y('Pris:Q', title='Pris (kr/kWh)'),
-                color=alt.Color('Farve:N', scale=None) # scale=None gør at den bruger hex-koderne direkte
+                color=alt.Color('Farve:N', scale=None)
             ).properties(height=300)
-            
             st.altair_chart(chart, use_container_width=True)
-            
-            # Lille hjælpetekst til dig selv under udvikling
-            if 0 not in df_el['Sortering'].values:
-                st.warning("⚠️ Prisen for 'NU' mangler (tjek om din dato i 2026 matcher API-data fra 2024).")
         else:
-            st.info("Ingen elpriser fundet for det valgte tidsrum (6 timer bagud/12 frem).")
-            st.caption(f"Appens 'nu' er: {nu.strftime('%d/%m-%Y %H:%M')}. API'et har kun data for nutiden.")
+            st.error("Kunne ikke generere grafen.")
 
     except Exception as e:
-        st.error(f"Fejl ved hentning: {e}")
-
+        st.error(f"Fejl: {e}")
 with col_skrald:
     st.header("🗑️ Skrald")
     # Vi bruger de datoer du sendte i billederne
