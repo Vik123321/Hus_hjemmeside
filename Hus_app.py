@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
+from zoneinfo import ZoneInfo # <-- NY: Til at styre dansk tidszone
 import requests
 
 # Konfiguration
@@ -33,31 +34,46 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser (DK1)")
     try:
-        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=48&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
+        # Vi henter lidt ekstra data (72 timer) for at være sikre på at have nok til 12 timer frem
+        url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=72&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
         records.reverse()
         
         tider, priser, farver = [], [], []
-        nu = datetime.datetime.now()
+        
+        # 1. Hent den nuværende tid og tving den over i dansk tidszone
+        tz_dk = ZoneInfo("Europe/Copenhagen")
+        nu = datetime.datetime.now(tz_dk)
+        nu_hel_time = nu.replace(minute=0, second=0, microsecond=0) # Runder ned til hele timer
         
         for r in records:
-            p = (r['SpotPriceDKK'] / 1000) * 1.25
-            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', ''))
-            t_str = t_obj.strftime("%d/%m %H:00")
+            # 2. Hent tidspunktet fra API'et (som er dansk tid) og gør det 'timezone-aware'
+            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '')).replace(tzinfo=tz_dk)
             
-            tider.append(t_str)
-            priser.append(p)
-            # Tjekker om timen matcher nuværende time
-            if t_obj.date() == nu.date() and t_obj.hour == nu.hour:
-                farver.append("#808080") # Grå for NU
-            else:
-                farver.append("#f5c211") # Gul for resten
+            # Udregn forskellen i timer
+            timer_forskel = (t_obj - nu_hel_time).total_seconds() / 3600
+            
+            # 3. Filtrer: Vis kun fra -6 timer til +12 timer
+            if -6 <= timer_forskel <= 12:
+                p = (r['SpotPriceDKK'] / 1000) * 1.25 # Omregn til DKK inkl. moms
+                t_str = t_obj.strftime("%H:00") # Nøjes evt. med klokkeslæt ("%d/%m %H:00" hvis du vil have dato med)
+                
+                tider.append(t_str)
+                priser.append(p)
+                
+                # 4. Farvelæg: Grå for den aktuelle time, gul for resten
+                if timer_forskel == 0:
+                    farver.append("#808080") # Grå for LIGE NU
+                else:
+                    farver.append("#f5c211") # Gul for resten
         
+        # Byg grafen
         df_el = pd.DataFrame({"Tid": tider, "Pris": priser, "Farve": farver})
         st.bar_chart(df_el, x="Tid", y="Pris", color="Farve")
-    except:
-        st.error("Kunne ikke hente elpriser.")
+        
+    except Exception as e:
+        st.error(f"Kunne ikke hente elpriser. Fejl: {e}")
 
 with col_skrald:
     st.header("🗑️ Skrald")
