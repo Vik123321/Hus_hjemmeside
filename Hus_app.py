@@ -34,57 +34,68 @@ col_strøm, col_skrald, col_vejr = st.columns([2, 1, 1])
 with col_strøm:
     st.header("⚡ Strømpriser (DK1)")
     try:
-        # 1. Hent nyeste data fra Energi Data Service
+        # 1. Hent data fra Energi Data Service
         url = 'https://api.energidataservice.dk/dataset/Elspotprices?limit=100&filter={"PriceArea":["DK1"]}&sort=HourDK%20DESC'
         res = requests.get(url).json()
         records = res.get('records', [])
-        records.reverse()
+        records.reverse() # Sorter så vi går fra fortid mod fremtid
         
+        import datetime
         from zoneinfo import ZoneInfo
         import altair as alt
+        
+        # 2. Find "NU" i dansk tid (9. maj 2026)
         tz_dk = ZoneInfo("Europe/Copenhagen")
         nu = datetime.datetime.now(tz_dk).replace(minute=0, second=0, microsecond=0)
         
         data_list = []
         
-        # Tjek om vi overhovedet har data der matcher 2026
-        has_current_data = any(nu.year == int(r['HourDK'][:4]) for r in records)
-
-        if not has_current_data:
-            st.caption("🧪 Simulation: Viser nyeste tilgængelige priser tilpasset 2026.")
-            # Tag de sidste 19 timer fra API'et og 'fake' deres tidspunkter
-            latest_19 = records[-19:]
-            for i, r in enumerate(latest_19):
-                diff = i - 6 # Gør så den 7. søjle (index 6) altid er 'NU' (diff=0)
-                fiktiv_tid = nu + datetime.timedelta(hours=diff)
+        # 3. Gennemgå priserne og find de 6 timer bagud og 12 timer frem
+        for r in records:
+            # Konverter tidspunkt fra API til dansk tid
+            t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '')).replace(tzinfo=tz_dk)
+            
+            # Beregn tidsforskel fra nuværende time
+            diff = int((t_obj - nu).total_seconds() / 3600)
+            
+            # Filter: Præcis -6 timer til +12 timer
+            if -6 <= diff <= 12:
+                pris_med_moms = (r['SpotPriceDKK'] / 1000) * 1.25
+                tid_label = t_obj.strftime("%H:00")
                 
-                pris = (r['SpotPriceDKK'] / 1000) * 1.25
+                # Sæt farve: Grå for nu (diff 0), gul for alle andre
                 farve = "#808080" if diff == 0 else "#f5c211"
-                data_list.append({"Tid": fiktiv_tid.strftime("%H:00"), "Pris": pris, "Farve": farve, "Sortering": diff})
-        else:
-            # Normal drift hvis API'et har 2026 data
-            for r in records:
-                t_obj = datetime.datetime.fromisoformat(r['HourDK'].replace('Z', '')).replace(tzinfo=tz_dk)
-                diff = int((t_obj - nu).total_seconds() / 3600)
-                if -6 <= diff <= 12:
-                    pris = (r['SpotPriceDKK'] / 1000) * 1.25
-                    farve = "#808080" if diff == 0 else "#f5c211"
-                    data_list.append({"Tid": t_obj.strftime("%H:00"), "Pris": pris, "Farve": farve, "Sortering": diff})
+                
+                data_list.append({
+                    "Tid": tid_label, 
+                    "Pris": pris_med_moms, 
+                    "Farve": farve, 
+                    "Sortering": diff
+                })
 
+        # 4. Lav grafen
         df_el = pd.DataFrame(data_list)
 
         if not df_el.empty:
+            # Vi bruger Altair for at sikre os, at farverne og sorteringen er 100% korrekt
             chart = alt.Chart(df_el).mark_bar().encode(
                 x=alt.X('Tid:N', sort=alt.SortField('Sortering'), title='Klokkeslæt'),
-                y=alt.Y('Pris:Q', title='Pris (kr/kWh)'),
-                color=alt.Color('Farve:N', scale=None)
+                y=alt.Y('Pris:Q', title='Pris (kr/kWh inkl. moms)'),
+                color=alt.Color('Farve:N', scale=None) # Bruger de hex-koder vi har defineret
             ).properties(height=300)
+            
             st.altair_chart(chart, use_container_width=True)
+            
+            # Vis den nuværende pris som tekst nedenunder
+            nu_række = df_el[df_el['Sortering'] == 0]
+            if not nu_række.empty:
+                st.write(f"**Pris lige nu:** {nu_række['Pris'].values[0]:.2f} kr/kWh inkl. moms")
         else:
-            st.error("Kunne ikke generere grafen.")
+            st.warning(f"Ingen data fundet for {nu.strftime('%d/%m-%Y')}. Tjek om API'en er opdateret.")
 
     except Exception as e:
-        st.error(f"Fejl: {e}")
+        st.error(f"Kunne ikke hente elpriser: {e}")
+        
 with col_skrald:
     st.header("🗑️ Skrald")
     # Vi bruger de datoer du sendte i billederne
